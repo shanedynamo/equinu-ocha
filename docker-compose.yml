@@ -1,0 +1,112 @@
+version: "3.9"
+
+services:
+  # ── Open WebUI (Chat Frontend) ─────────────────────────────────────────────
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      OPENWEBUI_NAME: "Dynamo AI"
+      ENABLE_OAUTH_SIGNUP: "true"
+      OAUTH_PROVIDER_NAME: "Microsoft"
+      WEBUI_AUTH: "true"
+      # Point to Claude Engine middleware, not directly to Anthropic
+      OPENAI_API_BASE_URLS: "http://claude-engine:3001/v1"
+      OPENAI_API_KEYS: "not-needed"
+      DATABASE_URL: "postgresql://dynamo:localdev@postgres:5432/dynamo_ai"
+      ENABLE_OLLAMA_API: "false"
+      WEBUI_SECRET_KEY: "dynamo-webui-local-dev-secret"
+      WEBUI_ADMIN_EMAIL: "${OPENWEBUI_ADMIN_EMAIL:-admin@dynamo-ai.local}"
+      WEBUI_ADMIN_PASSWORD: "${OPENWEBUI_ADMIN_PASSWORD:-admin}"
+      WEBUI_ADMIN_NAME: "Admin"
+      ENABLE_SIGNUP: "false"
+    volumes:
+      - open-webui-data:/app/backend/data
+      - ./open-webui-pipeline:/app/plugins/pipeline:ro
+      - ./open-webui-functions:/app/plugins/functions:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      claude-engine:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Claude Engine (API Middleware) ──────────────────────────────────────────
+  claude-engine:
+    build:
+      context: ./claude-engine
+      dockerfile: Dockerfile
+      target: development
+    # Run migrations before starting the dev server
+    command: sh -c "npx tsx src/db/migrate.ts && npm run dev"
+    ports:
+      - "${PORT:-3001}:3001"
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://dynamo:localdev@postgres:5432/dynamo_ai"
+      REDIS_URL: "redis://redis:6379"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./claude-engine/src:/app/src
+    restart: unless-stopped
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dynamo_ai
+      POSTGRES_USER: dynamo
+      POSTGRES_PASSWORD: localdev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dynamo -d dynamo_ai"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Apache Superset (Analytics Dashboard) ──────────────────────────────────
+  superset:
+    image: apache/superset:latest
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    environment:
+      SUPERSET_SECRET_KEY: "${SUPERSET_SECRET_KEY:-superset-local-dev-secret-change-me}"
+      SQLALCHEMY_DATABASE_URI: "postgresql://dynamo:localdev@postgres:5432/dynamo_ai"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    volumes:
+      - ./analytics/superset_config.py:/app/pythonpath/superset_config.py
+      - superset-data:/app/superset_home
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  open-webui-data:
+  superset-data:
