@@ -81,5 +81,6 @@ FEATURE_FLAGS = {
 # Superset application name shown in the browser tab
 APP_NAME = "Dynamo AI Analytics"
 
-# Prevent Superset from phoning home
-STATS_LOGGER = None
+# Use a dummy stats logger that does nothing (setting to None crashes /health)
+from superset.stats_logger import DummyStatsLogger
+STATS_LOGGER = DummyStatsLogger()

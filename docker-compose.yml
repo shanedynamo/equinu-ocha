@@ -66,6 +66,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-postgres.sql:/docker-entrypoint-initdb.d/01-create-superset-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dynamo -d dynamo_ai"]
       interval: 5s
@@ -87,12 +88,14 @@ services:
 
   # ── Apache Superset (Analytics Dashboard) ──────────────────────────────────
   superset:
-    image: apache/superset:latest
+    build:
+      context: ./analytics
+      dockerfile: Dockerfile
     ports:
       - "${SUPERSET_PORT:-8088}:8088"
     environment:
       SUPERSET_SECRET_KEY: "${SUPERSET_SECRET_KEY:-superset-local-dev-secret-change-me}"
-      SQLALCHEMY_DATABASE_URI: "postgresql://dynamo:localdev@postgres:5432/dynamo_ai"
+      SQLALCHEMY_DATABASE_URI: "postgresql://dynamo:localdev@postgres:5432/superset_metadata"
       REDIS_HOST: redis
       REDIS_PORT: 6379
     volumes:

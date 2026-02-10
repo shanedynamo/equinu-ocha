@@ -74,7 +74,7 @@ record_fail() {
 
 check_dependencies() {
   local missing=0
-  for cmd in curl jq psql; do
+  for cmd in curl jq; do
     if ! command -v "$cmd" &>/dev/null; then
       echo "ERROR: Required command '$cmd' is not installed."
       missing=1
@@ -83,12 +83,32 @@ check_dependencies() {
   if [ "$missing" -eq 1 ]; then
     exit 1
   fi
+  # psql is optional — fall back to docker compose exec
+  if ! command -v psql &>/dev/null; then
+    echo "  Note: psql not found locally, using docker compose exec for DB queries."
+    USE_DOCKER_PSQL=1
+  fi
 }
 
+USE_DOCKER_PSQL=0
+
 db_query() {
-  PGPASSWORD="$DB_PASSWORD" psql \
-    -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
-    -tAc "$1" 2>/dev/null
+  if [ "$USE_DOCKER_PSQL" -eq 1 ]; then
+    docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -tAc "$1" 2>/dev/null
+  else
+    PGPASSWORD="$DB_PASSWORD" psql \
+      -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
+      -tAc "$1" 2>/dev/null
+  fi
+}
+
+pg_ready() {
+  if [ "$USE_DOCKER_PSQL" -eq 1 ]; then
+    docker compose exec -T postgres pg_isready -U "$DB_USER" -d "$DB_NAME" -q 2>/dev/null
+  else
+    PGPASSWORD="$DB_PASSWORD" pg_isready \
+      -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -q 2>/dev/null
+  fi
 }
 
 # HTTP helpers — capture body, status code, and headers
@@ -164,8 +184,7 @@ test_service_health() {
   fi
 
   # 1b. PostgreSQL
-  if PGPASSWORD="$DB_PASSWORD" pg_isready \
-       -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -q 2>/dev/null; then
+  if pg_ready; then
     record_pass "PostgreSQL ready"
   else
     record_fail "PostgreSQL ready" "pg_isready failed"
